@@ -5395,7 +5395,10 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
       "on_create": true,
       "on_paste": true,
       "on_drop": true
-    }
+    },
+    "show_external_libraries": false,
+    "show_all_external_libraries": false,
+    "external_libraries_removal": "auto_remove"
   }
 }
 ```
@@ -5757,6 +5760,90 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - `on_create`: Whether to automatically open newly created files in the editor.
 - `on_paste`: Whether to automatically open files after pasting or duplicating them.
 - `on_drop`: Whether to automatically open files dropped from external sources.
+
+### Show External Libraries
+
+- Description: Whether to show an "External Libraries" section in the project panel, listing the project's dependencies (e.g. Rust crates) so their source can be browsed directly.
+- Setting: `show_external_libraries`
+- Default: `false`
+
+**Options**
+
+1. Show the External Libraries section
+
+```json [settings]
+{
+  "project_panel": {
+    "show_external_libraries": true
+  }
+}
+```
+
+2. Hide the External Libraries section
+
+```json [settings]
+{
+  "project_panel": {
+    "show_external_libraries": false
+  }
+}
+```
+
+### Show All External Libraries
+
+- Description: Whether to eagerly enumerate all of the project's external libraries (e.g. via `cargo metadata` for Rust) and list them in the project panel's "External Libraries" section. When disabled, libraries are only surfaced after they are opened (e.g. via Go to Definition).
+- Setting: `show_all_external_libraries`
+- Default: `false`
+
+**Options**
+
+1. Enable eager enumeration of all external libraries
+
+```json [settings]
+{
+  "project_panel": {
+    "show_all_external_libraries": true
+  }
+}
+```
+
+2. Only surface libraries after they are opened
+
+```json [settings]
+{
+  "project_panel": {
+    "show_all_external_libraries": false
+  }
+}
+```
+
+### External Libraries Removal
+
+- Description: Controls when external libraries are removed from the project panel's "External Libraries" section.
+- Setting: `external_libraries_removal`
+- Default: `auto_remove`
+
+**Options**
+
+1. Remove a library automatically when its last open buffer closes
+
+```json [settings]
+{
+  "project_panel": {
+    "external_libraries_removal": "auto_remove"
+  }
+}
+```
+
+2. Keep libraries listed until they are removed manually via the context menu
+
+```json [settings]
+{
+  "project_panel": {
+    "external_libraries_removal": "manual_remove"
+  }
+}
+```
 
 ## Agent
 

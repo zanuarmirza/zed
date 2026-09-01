@@ -5226,7 +5226,7 @@ fn window_and_layout_page() -> SettingsPage {
 }
 
 fn panels_page() -> SettingsPage {
-    fn project_panel_section() -> [SettingsPageItem; 31] {
+    fn project_panel_section() -> [SettingsPageItem; 32] {
         [
             SettingsPageItem::SectionHeader("Project Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5656,6 +5656,31 @@ fn panels_page() -> SettingsPage {
                             .project_panel
                             .get_or_insert_default()
                             .external_libraries_removal = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show All External Libraries",
+                description: "Eagerly enumerate all of the project's external libraries (e.g. via \
+                     `cargo metadata` for Rust) and list them in the \"External Libraries\" section. \
+                     When off, libraries are only surfaced after being opened (e.g. via Go to Definition).",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("project_panel.show_all_external_libraries"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .show_all_external_libraries
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .show_all_external_libraries = value;
                     },
                 }),
                 metadata: None,

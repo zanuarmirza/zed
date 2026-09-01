@@ -912,8 +912,14 @@ impl ProjectPanel {
                     if project_panel_settings.show_external_libraries
                         != new_settings.show_external_libraries
                     {
-                        // Just show/hide; libraries are surfaced on-demand via
-                        // Go to Definition, so there's nothing to enumerate here.
+                        this.update_visible_entries(None, false, false, window, cx);
+                    }
+                    if project_panel_settings.show_all_external_libraries
+                        != new_settings.show_all_external_libraries
+                    {
+                        // The external libraries store observes the setting
+                        // itself and (re-)enumerates or removes libraries;
+                        // the panel only needs to refresh its entries.
                         this.update_visible_entries(None, false, false, window, cx);
                     }
                     if project_panel_settings.sticky_scroll && !new_settings.sticky_scroll {
@@ -4792,9 +4798,15 @@ impl ProjectPanel {
                                 match new_state.expanded_dir_ids.entry(worktree_id) {
                                     hash_map::Entry::Occupied(e) => e.into_mut(),
                                     hash_map::Entry::Vacant(e) => {
-                                        // The first time a worktree's root entry becomes available,
-                                        // mark that root entry as expanded.
-                                        if let Some(entry) = worktree_snapshot.root_entry() {
+                                        // The first time a worktree's root entry becomes
+                                        // available, mark that root entry as expanded.
+                                        // External library worktrees instead start
+                                        // collapsed, showing only the library name; the
+                                        // entry is still inserted (empty) so expanding
+                                        // them works right away.
+                                        if is_external_library {
+                                            e.insert(Vec::new()).as_slice()
+                                        } else if let Some(entry) = worktree_snapshot.root_entry() {
                                             e.insert(vec![entry.id]).as_slice()
                                         } else {
                                             &[]

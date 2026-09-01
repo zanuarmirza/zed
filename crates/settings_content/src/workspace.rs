@@ -897,6 +897,15 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: false
     pub show_external_libraries: Option<bool>,
+    /// Whether to eagerly enumerate all of the project's external libraries
+    /// (via language-specific dependency listers, e.g. `cargo metadata` for
+    /// Rust) and list them in the project panel's "External Libraries"
+    /// section, collapsed so only each library's name is shown. When false,
+    /// libraries are only surfaced after being opened (e.g. via Go to
+    /// Definition).
+    ///
+    /// Default: false
+    pub show_all_external_libraries: Option<bool>,
     /// Controls when external libraries are removed from the project panel's
     /// "External Libraries" section. With `auto_remove`, a library is removed
     /// as soon as its last open buffer closes. With `manual_remove`, libraries

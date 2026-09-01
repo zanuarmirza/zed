@@ -37,6 +37,7 @@ pub struct ProjectPanelSettings {
     pub diagnostic_badges: bool,
     pub git_status_indicator: bool,
     pub show_external_libraries: bool,
+    pub show_all_external_libraries: bool,
     pub external_libraries_removal: ExternalLibrariesRemoval,
 }
 
@@ -146,6 +147,7 @@ impl Settings for ProjectPanelSettings {
             diagnostic_badges: project_panel.diagnostic_badges.unwrap(),
             git_status_indicator: project_panel.git_status_indicator.unwrap(),
             show_external_libraries: project_panel.show_external_libraries.unwrap(),
+            show_all_external_libraries: project_panel.show_all_external_libraries.unwrap(),
             external_libraries_removal: project_panel
                 .external_libraries_removal
                 .unwrap_or_default(),

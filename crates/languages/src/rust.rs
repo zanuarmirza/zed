@@ -1320,7 +1320,7 @@ impl DependencyLister for RustDependencyLister {
             return Ok(Vec::new());
         }
 
-        let output = new_command("cargo")
+        let output = match new_command("cargo")
             .current_dir(&project_root)
             .arg("metadata")
             .arg("--format-version")
@@ -1328,7 +1328,15 @@ impl DependencyLister for RustDependencyLister {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
-            .await?;
+            .await
+        {
+            Ok(output) => output,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                // Cargo isn't installed; there's nothing to list.
+                return Ok(Vec::new());
+            }
+            Err(error) => return Err(error.into()),
+        };
 
         if !output.status.success() {
             let stderr_msg = String::from_utf8_lossy(&output.stderr);

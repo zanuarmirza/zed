@@ -188,6 +188,46 @@ The `project_panel.sort_order` setting controls name comparison:
 - {#action project_panel::RemoveFromProject} removes a workspace root folder
   from the project.
 
+## External Libraries
+
+The Project Panel can list your project's dependencies (e.g. Rust crates) in a
+separate "External Libraries" section so you can browse their source code.
+Enable it with `project_panel.show_external_libraries`:
+
+```json [settings]
+{
+  "project_panel": {
+    "show_external_libraries": true
+  }
+}
+```
+
+By default, a library appears once you open a file in it, e.g. via Go to
+Definition. To list every dependency up front instead, enable
+`project_panel.show_external_libraries` together with
+`project_panel.show_all_external_libraries`:
+
+```json [settings]
+{
+  "project_panel": {
+    "show_external_libraries": true,
+    "show_all_external_libraries": true
+  }
+}
+```
+
+With `show_all_external_libraries` enabled, libraries are enumerated when the
+project is opened (currently Rust projects, via `cargo metadata`) and stay
+listed until you remove them via the context menu or disable the setting.
+
+The `project_panel.external_libraries_removal` setting controls when libraries
+you navigated into are removed again:
+
+- `"auto_remove"` (default) removes a library when its last open buffer
+  closes.
+- `"manual_remove"` keeps libraries listed until you remove them via the
+  context menu.
+
 ## Undo and Redo
 
 The Project Panel keeps a history of the file operations you perform through it,

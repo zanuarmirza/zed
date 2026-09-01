@@ -21,6 +21,8 @@ use settings::{
 };
 use smallvec::smallvec;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
 use util::{path, paths::PathStyle, rel_path::rel_path};
 use workspace::{
     AppState, ItemHandle, MultiWorkspace, Pane, Workspace,
@@ -6790,13 +6792,7 @@ async fn test_external_library_removal_setting(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, &mut cx),
-        &[
-            "v project",
-            "      main.py",
-            "v external_lib",
-            "    > src",
-            "      Cargo.toml",
-        ],
+        &["v project", "      main.py", "> external_lib",],
         "manual_remove should keep the library after its last buffer closes"
     );
 
@@ -6824,13 +6820,7 @@ async fn test_navigation_crosses_into_external_libraries(cx: &mut gpui::TestAppC
 
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, &mut cx),
-        &[
-            "v project",
-            "      main.py",
-            "v external_lib",
-            "    > src",
-            "      Cargo.toml",
-        ]
+        &["v project", "      main.py", "> external_lib",]
     );
     assert_eq!(
         panel.read_with(&cx, |panel, _| panel.state.external_worktrees_start),
@@ -6839,8 +6829,8 @@ async fn test_navigation_crosses_into_external_libraries(cx: &mut gpui::TestAppC
     );
     assert_eq!(
         panel.read_with(&cx, |panel, _| panel.external_entries_len()),
-        3,
-        "the external section should hold the library's three visible entries"
+        1,
+        "the external section should hold only the collapsed library root"
     );
 
     // Select the last project entry, then move down across the section
@@ -6921,6 +6911,288 @@ async fn test_external_libraries_pane_resize(cx: &mut gpui::TestAppContext) {
         panel.set_external_libraries_pane_height(px(10.), px(100.), cx);
         assert_eq!(panel.external_libraries_pane_height, Some(540. / 600.));
     });
+}
+
+/// A dependency lister that reports a fixed set of libraries for any project
+/// root, standing in for `cargo metadata` in tests.
+struct FakeDependencyLister {
+    libraries: Vec<PathBuf>,
+}
+
+// Implemented with a hand-written boxed return type (matching what
+// `#[async_trait]` desugars to, including the early-bound lifetimes) so this
+// crate doesn't need an `async-trait` dev-dependency just for this test fake.
+impl language::DependencyLister for FakeDependencyLister {
+    fn language_name(&self) -> language::LanguageName {
+        language::LanguageName::new_static("Rust")
+    }
+
+    fn list<'a, 'async_trait>(
+        &'a self,
+        _project_root: PathBuf,
+    ) -> futures::future::BoxFuture<'async_trait, anyhow::Result<Vec<language::Dependency>>>
+    where
+        'a: 'async_trait,
+    {
+        Box::pin(async move {
+            Ok(self
+                .libraries
+                .iter()
+                .map(|path| language::Dependency {
+                    name: "fake".into(),
+                    version: Some("1.0.0".into()),
+                    source: language::DependencySource::Registry,
+                    source_path: path.clone(),
+                })
+                .collect())
+        })
+    }
+}
+
+/// Sets up a project at `/project` with `show_all_external_libraries` enabled
+/// and a [`FakeDependencyLister`] reporting the given library roots, then
+/// returns the project, the external libraries store and the test context
+/// with enumeration already run to completion.
+async fn show_all_external_libraries_harness(
+    cx: &mut gpui::TestAppContext,
+    libraries: &[&str],
+) -> (
+    Entity<Project>,
+    Entity<project::ExternalLibrariesStore>,
+    Arc<FakeFs>,
+) {
+    init_test(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                let project_panel = settings.project_panel.get_or_insert_default();
+                project_panel.show_external_libraries = Some(true);
+                project_panel.show_all_external_libraries = Some(true);
+            });
+        });
+        project::DependencyProvidersStore::global(cx).register(Arc::new(FakeDependencyLister {
+            libraries: libraries.iter().map(PathBuf::from).collect(),
+        }));
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/project", json!({ "main.py": "" })).await;
+    for library in libraries {
+        fs.insert_tree(
+            library,
+            json!({
+                "Cargo.toml": "",
+                "src": { "lib.rs": "" },
+            }),
+        )
+        .await;
+    }
+
+    let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+    // Adding the visible project worktree scheduled a debounced enumeration;
+    // advance the clock past the debounce and let it run.
+    cx.executor().advance_clock(Duration::from_millis(600));
+    cx.run_until_parked();
+
+    let store = project.read_with(cx, |project, _| {
+        project
+            .external_libraries_store()
+            .expect("local project has an external libraries store")
+    });
+    (project, store, fs)
+}
+
+#[gpui::test]
+async fn test_show_all_external_libraries_enumerates_all(cx: &mut gpui::TestAppContext) {
+    let (project, store, _fs) =
+        show_all_external_libraries_harness(cx, &["/lib_a", "/lib_b"]).await;
+
+    assert_eq!(
+        store.read_with(cx, |store, _| store.worktrees().len()),
+        2,
+        "both discovered dependencies should be surfaced"
+    );
+    assert!(store.read_with(cx, |store, _| {
+        store.is_enumerated_for_test(Path::new("/lib_a"))
+    }));
+    assert!(store.read_with(cx, |store, _| {
+        store.is_enumerated_for_test(Path::new("/lib_b"))
+    }));
+
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..30, cx),
+        &["v project", "      main.py", "> lib_a", "> lib_b",],
+        "every enumerated library should be listed in the external libraries section, collapsed"
+    );
+
+    // Expanding a library's collapsed root lists its children.
+    let (lib_a_worktree_id, lib_a_root_entry) = store.read_with(cx, |store, cx| {
+        let worktree = store.worktrees()[0].read(cx);
+        (
+            worktree.id(),
+            worktree.root_entry().expect("library root entry").id,
+        )
+    });
+    panel.update_in(cx, |panel, window, cx| {
+        panel.expand_entry(lib_a_worktree_id, lib_a_root_entry, cx);
+        panel.update_visible_entries(None, false, false, window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..30, cx),
+        &[
+            "v project",
+            "      main.py",
+            "v lib_a",
+            "    > src",
+            "      Cargo.toml",
+            "> lib_b",
+        ],
+        "expanding a library's root should list its children"
+    );
+}
+
+#[gpui::test]
+async fn test_enumerated_libraries_persist_and_toggle_off(cx: &mut gpui::TestAppContext) {
+    let (project, store, _fs) = show_all_external_libraries_harness(cx, &["/lib_a"]).await;
+
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &["v project", "      main.py", "> lib_a",]
+    );
+
+    // Even with `auto_remove` (the default), dropping the last referencing
+    // buffer doesn't remove an enumerated library.
+    let buffer_id = BufferId::new(1).unwrap();
+    store.update(cx, |store, _| {
+        store.track_buffer_for_test(Path::new("/lib_a"), buffer_id)
+    });
+    store.update(cx, |store, cx| {
+        store.simulate_buffer_dropped_for_test(buffer_id, cx)
+    });
+    cx.run_until_parked();
+    assert!(
+        store.read_with(cx, |store, _| store
+            .is_enumerated_for_test(Path::new("/lib_a"))),
+        "enumerated libraries should ignore auto removal while the setting is enabled"
+    );
+
+    // Disabling the setting removes the enumerated library again.
+    cx.update(|_, cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .show_all_external_libraries = Some(false);
+            });
+        });
+    });
+    cx.run_until_parked();
+    assert!(
+        !store.read_with(cx, |store, _| store
+            .is_enumerated_for_test(Path::new("/lib_a"))),
+        "disabling the setting should remove enumerated libraries"
+    );
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &["v project", "      main.py"],
+        "the external libraries section should be empty after disabling the setting"
+    );
+}
+
+#[gpui::test]
+async fn test_dismissed_enumerated_library_skipped_by_reenumeration(cx: &mut gpui::TestAppContext) {
+    let (project, store, fs) = show_all_external_libraries_harness(cx, &["/lib_a"]).await;
+    fs.insert_tree("/project2", json!({ "main.py": "" })).await;
+
+    let worktree_id = store.read_with(cx, |store, cx| {
+        store
+            .worktrees()
+            .pop()
+            .expect("enumerated library worktree")
+            .read(cx)
+            .id()
+    });
+    store.update(cx, |store, cx| store.remove_library(worktree_id, cx));
+    cx.run_until_parked();
+    assert!(
+        store.read_with(cx, |store, _| store
+            .is_dismissed_for_test(Path::new("/lib_a"))),
+        "manually removing an enumerated library should dismiss it"
+    );
+    assert_eq!(
+        store.read_with(cx, |store, _| store.worktrees().len()),
+        0,
+        "the dismissed library should be gone from the panel"
+    );
+
+    // Adding another visible worktree triggers re-enumeration, which must
+    // keep skipping the dismissed library.
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/project2", true, cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().advance_clock(Duration::from_millis(600));
+    cx.run_until_parked();
+    assert_eq!(
+        store.read_with(cx, |store, _| store.worktrees().len()),
+        0,
+        "re-enumeration should not restore the dismissed library"
+    );
+
+    // Toggling the setting off and on again clears the dismissal and
+    // re-enumerates everything.
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .show_all_external_libraries = Some(false);
+            });
+        })
+    });
+    cx.run_until_parked();
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .show_all_external_libraries = Some(true);
+            });
+        })
+    });
+    cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_millis(600));
+    cx.run_until_parked();
+    assert_eq!(
+        store.read_with(cx, |store, _| store.worktrees().len()),
+        1,
+        "a fresh enable should re-enumerate the previously dismissed library"
+    );
+    assert!(
+        store.read_with(cx, |store, _| store
+            .is_enumerated_for_test(Path::new("/lib_a"))),
+        "the re-enumerated library should be marked as enumerated again"
+    );
 }
 
 #[gpui::test]
